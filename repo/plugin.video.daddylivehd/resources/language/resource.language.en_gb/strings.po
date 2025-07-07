@@ -1,7 +1,7 @@
 # Kodi Media Center language file
-# Addon Name: DaddyLiveHD
+# Addon Name: NEW DaddyLiveHD
 # Addon id: plugin.video.daddylivehd
-# Addon Provider: FubuZ
+# Addon Provider: Nimbuzz
 msgid ""
 msgstr ""
 
