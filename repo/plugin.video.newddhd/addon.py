@@ -24,7 +24,7 @@ import traceback
 addon_url = sys.argv[0]
 addon_handle = int(sys.argv[1])
 params = dict(parse_qsl(sys.argv[2][1:]))
-addon = xbmcaddon.Addon(id='plugin.video.daddylivehd')
+addon = xbmcaddon.Addon(id='plugin.video.newddhd')
 
 mode = addon.getSetting('mode')
 baseurl = addon.getSetting('baseurl').strip()

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <settings version="1">
-  <section id="plugin.video.daddylivehd">
+  <section id="plugin.video.newddhd">
     <category id="daddylive_epg" label="30100">
       <group id="1" label="30101">
         <setting id="epg_timezone" type="string" label="30102" help="30103">

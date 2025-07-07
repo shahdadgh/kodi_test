@@ -2,9 +2,9 @@ Sadly, I do not have the time to update the addon - repo archived. Feel free to 
 
 # Nimbuzz's Kodi Repository
 
-This is a repository for the [NEW DaddyLiveHD](https://github.com/Fubuz/fubuz.github.io/tree/master/repo/plugin.video.daddylivehd) Kodi addon.
+This is a repository for the [NEW DaddyLiveHD](https://github.com/Fubuz/fubuz.github.io/tree/master/repo/plugin.video.newddhd) Kodi addon.
 
-[Changelog](https://github.com/Fubuz/fubuz.github.io/blob/master/repo/plugin.video.daddylivehd/changelog.txt)
+[Changelog](https://github.com/Fubuz/fubuz.github.io/blob/master/repo/plugin.video.newddhd/changelog.txt)
 
 ## How to Install
 
