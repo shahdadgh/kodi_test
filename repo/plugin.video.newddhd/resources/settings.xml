@@ -59,7 +59,7 @@
       <group id="1" label="30113">
 		<setting id="baseurl" type="string" label="30110" help="30111">
 		  <level>0</level>
-		  <default>https://daddylive.mp/</default>
+		  <default>https://thedaddy.click/</default>
 		  <constraints>
 			<allowempty>true</allowempty>
 		  </constraints>
