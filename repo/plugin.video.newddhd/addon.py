@@ -366,12 +366,12 @@ def channels(fetch_live=False):
 
 def PlayStream(link):
     """
-    Simplified PlayStream using the premium{id} pattern
+    Final working PlayStream using the tested patterns
     """
     headers = {'Referer': baseurl, 'user-agent': UA}
 
     try:
-        # 1) Extract stream ID from the original link
+        # Extract stream ID
         stream_id_match = re.search(r'stream-(\d+)\.php', link)
         if not stream_id_match:
             log("Could not extract stream ID from link")
@@ -379,138 +379,107 @@ def PlayStream(link):
             return
         
         stream_id = stream_id_match.group(1)
-        log(f"Stream ID: {stream_id}")
-
-        # 2) Get the main iframe page to find mirrors
-        resp0 = requests.post(link, headers=headers, timeout=10).text
-        
-        # Find main iframe
-        all_iframes = re.findall(r'iframe[^>]*src=["\']([^"\']+)["\']', resp0, re.IGNORECASE)
-        main_iframe_url = None
-        for src in all_iframes:
-            if 'thedaddy.to/embed/stream-' in src:
-                main_iframe_url = src
-                break
-        
-        if not main_iframe_url:
-            log("Main iframe not found")
-            xbmcgui.Dialog().ok("Playback Error", "Could not find streaming iframe.")
-            return
-
-        # 3) Get nested iframe to extract mirrors
-        resp1 = requests.post(main_iframe_url, headers=headers, timeout=10).text
-        nested_iframes = re.findall(r'iframe[^>]*src=["\']([^"\']+)["\']', resp1, re.IGNORECASE)
-        
-        nested_iframe_url = None
-        for src in nested_iframes:
-            if 'yoxplay.xyz' in src and ('daddyhd.php' in src or 'daddylivehd.php' in src):
-                nested_iframe_url = src
-                break
-        
-        if not nested_iframe_url:
-            log("Nested iframe not found")
-            # Continue anyway - we can try without mirrors
-            mirrors = []
-        else:
-            # 4) Get mirrors from nested iframe
-            try:
-                headers_nested = {'Referer': main_iframe_url, 'user-agent': UA}
-                resp2 = requests.get(nested_iframe_url, headers=headers_nested, timeout=10).text
-                
-                encoded_match = re.search(r'encodedDomains["\'\s]*[=:]["\'\s]*["\']([^"\']+)["\']', resp2)
-                if encoded_match:
-                    decoded = base64.b64decode(encoded_match.group(1)).decode('utf-8')
-                    mirrors = json.loads(decoded)
-                    log(f"Found {len(mirrors)} mirrors")
-                else:
-                    mirrors = []
-            except Exception as e:
-                log(f"Error getting mirrors: {e}")
-                mirrors = []
-
-        # 5) Use the premium{id} pattern we discovered
         channel_key = f"premium{stream_id}"
-        log(f"Using channel_key: {channel_key}")
+        log(f"Stream ID: {stream_id}, Channel Key: {channel_key}")
 
-        # 6) Try main CDN first, then mirrors
-        hosts_to_try = ['top1.newkso.ru'] + mirrors[:10]  # Limit to first 10 mirrors for speed
+        # Headers that work (from test results)
+        stream_headers = {
+            'Origin': 'https://yoxplay.xyz',
+            'Referer': 'https://yoxplay.xyz/',
+            'user-agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0',
+            'Accept': '*/*',
+        }
 
-        last_error = None
-        for i, host in enumerate(hosts_to_try):
-            try:
-                log(f"Trying host {i+1}/{len(hosts_to_try)}: {host}")
+        # Step 1: Get server_key from yoxplay.xyz (this works!)
+        server_key = None
+        try:
+            lookup_url = f"https://yoxplay.xyz/server_lookup.php?channel_id={channel_key}"
+            log(f"Getting server key from: {lookup_url}")
+            
+            lookup_resp = requests.get(lookup_url, headers=stream_headers, timeout=10)
+            lookup_resp.raise_for_status()
+            
+            lookup_data = lookup_resp.json()
+            server_key = lookup_data.get('server_key')
+            log(f"Server lookup response: {lookup_data}")
+            
+            if server_key:
+                log(f"✅ Got server_key: {server_key}")
+            else:
+                log("❌ No server_key in response")
                 
-                # Try the direct CDN approach first (skip auth.php for now)
-                if host == 'top1.newkso.ru':
-                    m3u8 = f"{CDN1_BASE}/{channel_key}/mono.m3u8"
-                    host_root = f"https://{host}"
-                else:
-                    # For mirror hosts, try to get server_key
-                    try:
-                        # Use dummy auth values - they might not be needed
-                        auth_url = (
-                            f"{AUTH_SERVER}/auth.php?"
-                            f"channel_id={channel_key}"
-                            f"&ts=1&rnd=1&sig=1"
-                        )
-                        r_auth = requests.get(auth_url, headers=headers, timeout=5)
-                        
-                        # Try server_lookup
-                        host_root = f"https://{host}"
-                        lookup_url = f"{host_root}/server_lookup.php?channel_id={channel_key}"
-                        r_lookup = requests.get(lookup_url, headers=headers, timeout=5)
-                        r_lookup.raise_for_status()
-                        
-                        lookup_data = r_lookup.json()
-                        server_key = lookup_data.get('server_key')
-                        if server_key == "top1/cdn":
-                            m3u8 = f"{CDN1_BASE}/{channel_key}/mono.m3u8"
-                        else:
-                            m3u8 = f"https://{server_key}.{CDN_DEFAULT}/{server_key}/{channel_key}/mono.m3u8"
-                    except:
-                        # Fallback: assume same pattern as main CDN
-                        m3u8 = f"https://{host}/cdn/{channel_key}/mono.m3u8"
-                        host_root = f"https://{host}"
+        except Exception as e:
+            log(f"Server lookup failed: {e}")
 
-                log(f"Testing M3U8: {m3u8}")
+        # Step 2: Build M3U8 URL based on server_key
+        if server_key == "zeko":
+            m3u8_url = f"https://zekonew.newkso.ru/zeko/{channel_key}/mono.m3u8"
+        elif server_key == "top1/cdn":
+            m3u8_url = f"https://top1.newkso.ru/top1/cdn/{channel_key}/mono.m3u8"
+        elif server_key and "/" not in server_key:
+            # Generic pattern for other servers
+            m3u8_url = f"https://{server_key}new.newkso.ru/{server_key}/{channel_key}/mono.m3u8"
+        else:
+            # Fallback to known working pattern
+            log("Using fallback URL pattern")
+            m3u8_url = f"https://zekonew.newkso.ru/zeko/{channel_key}/mono.m3u8"
 
-                # 7) Test if the M3U8 URL is accessible
-                test_resp = requests.head(m3u8, headers={'Referer': host_root, 'user-agent': UA}, timeout=5)
-                if test_resp.status_code not in [200, 302]:
-                    raise Exception(f"M3U8 not accessible: {test_resp.status_code}")
+        log(f"M3U8 URL: {m3u8_url}")
 
-                # 8) Build final playback URL with headers
-                ref = quote_plus(host_root)
-                ua = quote_plus(UA)
-                final_link = f"{m3u8}|Referer={ref}&Origin={ref}&User-Agent={ua}&Keep-Alive=true"
+        # Step 3: Test if M3U8 is accessible
+        try:
+            test_resp = requests.head(m3u8_url, headers=stream_headers, timeout=10)
+            test_resp.raise_for_status()
+            log(f"✅ M3U8 accessible: HTTP {test_resp.status_code}")
+        except Exception as e:
+            log(f"❌ M3U8 test failed: {e}")
+            
+            # Try fallback URL if original failed
+            if 'zekonew.newkso.ru' not in m3u8_url:
+                fallback_url = f"https://zekonew.newkso.ru/zeko/{channel_key}/mono.m3u8"
+                log(f"Trying fallback: {fallback_url}")
+                try:
+                    test_resp = requests.head(fallback_url, headers=stream_headers, timeout=10)
+                    test_resp.raise_for_status()
+                    m3u8_url = fallback_url
+                    log(f"✅ Fallback URL works")
+                except Exception as e2:
+                    log(f"❌ Fallback also failed: {e2}")
+                    xbmcgui.Dialog().ok("Playback Error", f"Stream not accessible: {e}")
+                    return
 
-                log(f"Final playback URL: {final_link}")
+        # Step 4: Build final Kodi playback URL with proper headers
+        origin = quote_plus('https://yoxplay.xyz')
+        referer = quote_plus('https://yoxplay.xyz/')
+        ua = quote_plus(stream_headers['user-agent'])
+        
+        final_link = (
+            f"{m3u8_url}|"
+            f"Origin={origin}&"
+            f"Referer={referer}&"
+            f"User-Agent={ua}&"
+            f"Keep-Alive=true"
+        )
 
-                # 9) Start playback
-                liz = xbmcgui.ListItem('Daddylive', path=final_link)
-                liz.setProperty('inputstream','inputstream.ffmpegdirect')
-                liz.setMimeType('application/x-mpegURL')
-                liz.setProperty('inputstream.ffmpegdirect.is_realtime_stream','true')
-                liz.setProperty('inputstream.ffmpegdirect.stream_mode','timeshift')
-                liz.setProperty('inputstream.ffmpegdirect.manifest_type','hls')
-                xbmcplugin.setResolvedUrl(addon_handle, True, liz)
+        log(f"Final playback URL: {final_link}")
 
-                log("Playback started successfully")
-                return
+        # Step 5: Start playback
+        liz = xbmcgui.ListItem('Daddylive', path=final_link)
+        liz.setProperty('inputstream','inputstream.ffmpegdirect')
+        liz.setMimeType('application/x-mpegURL')
+        liz.setProperty('inputstream.ffmpegdirect.is_realtime_stream','true')
+        liz.setProperty('inputstream.ffmpegdirect.stream_mode','timeshift')
+        liz.setProperty('inputstream.ffmpegdirect.manifest_type','hls')
+        xbmcplugin.setResolvedUrl(addon_handle, True, liz)
 
-            except Exception as e:
-                last_error = e
-                log(f"Host {host} failed: {e}")
-
-        # If we get here, all hosts failed
-        log(f"All hosts failed. Last error: {last_error}")
-        xbmcgui.Dialog().ok("Playback Error", f"All streaming hosts failed. Last error: {str(last_error)}")
+        log("🎯 Playback started successfully")
 
     except Exception as e:
         log(f"PlayStream error: {e}")
         log(traceback.format_exc())
         xbmcgui.Dialog().ok("Playback Error", f"Streaming failed: {str(e)}")
 
+        
 kodiversion = getKodiversion()
 mode = params.get('mode', None)
 
