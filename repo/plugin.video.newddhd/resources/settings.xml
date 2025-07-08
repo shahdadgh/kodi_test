@@ -5,7 +5,7 @@
       <group id="1" label="30101">
         <setting id="epg_timezone" type="string" label="30102" help="30103">
           <level>0</level>
-          <default>0</default>
+          <default>10</default>
           <constraints>
             <options>
                 <option label="UTC-12 (Baker Island Time, BIT)">-12</option>
@@ -50,7 +50,7 @@
 		</setting>
 		<setting id="dst_enabled" type="boolean" label="30118" help="30119">
           <level>0</level>
-          <default>false</default>
+          <default>true</default>
           <control type="toggle" />
 		</setting>
 	  </group>

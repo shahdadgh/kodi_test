@@ -412,16 +412,16 @@ def PlayStream(link):
             log(f"Server lookup failed: {e}")
 
         # Step 2: Build M3U8 URL based on server_key
-        if server_key == "zeko":
-            m3u8_url = f"https://zekonew.newkso.ru/zeko/{channel_key}/mono.m3u8"
-        elif server_key == "top1/cdn":
+        if server_key == "top1/cdn":
             m3u8_url = f"https://top1.newkso.ru/top1/cdn/{channel_key}/mono.m3u8"
         elif server_key and "/" not in server_key:
-            # Generic pattern for other servers
+            # Dynamic pattern: {server_key}new.newkso.ru/{server_key}/
+            # Examples: zeko → zekonew.newkso.ru/zeko/, ddy6 → ddy6new.newkso.ru/ddy6/
             m3u8_url = f"https://{server_key}new.newkso.ru/{server_key}/{channel_key}/mono.m3u8"
+            log(f"Using dynamic server pattern for {server_key}")
         else:
-            # Fallback to known working pattern
-            log("Using fallback URL pattern")
+            # Fallback to zeko pattern
+            log("Using fallback zeko pattern")
             m3u8_url = f"https://zekonew.newkso.ru/zeko/{channel_key}/mono.m3u8"
 
         log(f"M3U8 URL: {m3u8_url}")
@@ -434,17 +434,32 @@ def PlayStream(link):
         except Exception as e:
             log(f"❌ M3U8 test failed: {e}")
             
-            # Try fallback URL if original failed
-            if 'zekonew.newkso.ru' not in m3u8_url:
-                fallback_url = f"https://zekonew.newkso.ru/zeko/{channel_key}/mono.m3u8"
-                log(f"Trying fallback: {fallback_url}")
+            # Try fallback patterns if original failed
+            fallback_tried = False
+            if server_key and server_key not in m3u8_url:
+                # Try the dynamic pattern if we haven't already
+                fallback_url = f"https://{server_key}new.newkso.ru/{server_key}/{channel_key}/mono.m3u8"
+                log(f"Trying dynamic pattern fallback: {fallback_url}")
                 try:
                     test_resp = requests.head(fallback_url, headers=stream_headers, timeout=10)
                     test_resp.raise_for_status()
                     m3u8_url = fallback_url
-                    log(f"✅ Fallback URL works")
+                    log(f"✅ Dynamic pattern fallback works")
+                    fallback_tried = True
                 except Exception as e2:
-                    log(f"❌ Fallback also failed: {e2}")
+                    log(f"❌ Dynamic pattern fallback failed: {e2}")
+            
+            if not fallback_tried and 'zekonew.newkso.ru' not in m3u8_url:
+                # Try zeko fallback
+                fallback_url = f"https://zekonew.newkso.ru/zeko/{channel_key}/mono.m3u8"
+                log(f"Trying zeko fallback: {fallback_url}")
+                try:
+                    test_resp = requests.head(fallback_url, headers=stream_headers, timeout=10)
+                    test_resp.raise_for_status()
+                    m3u8_url = fallback_url
+                    log(f"✅ Zeko fallback works")
+                except Exception as e3:
+                    log(f"❌ All fallbacks failed: {e3}")
                     xbmcgui.Dialog().ok("Playback Error", f"Stream not accessible: {e}")
                     return
 
