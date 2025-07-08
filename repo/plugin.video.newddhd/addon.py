@@ -366,174 +366,150 @@ def channels(fetch_live=False):
 
 def PlayStream(link):
     """
-    Tries each mirror host end-to-end (iframe → auth vars → auth.php → server_lookup.php)
-    until one completes successfully. Builds and plays the final HLS URL.
+    Simplified PlayStream using the premium{id} pattern
     """
     headers = {'Referer': baseurl, 'user-agent': UA}
 
     try:
-        # 1) Extract the raw iframe src URL
+        # 1) Extract stream ID from the original link
+        stream_id_match = re.search(r'stream-(\d+)\.php', link)
+        if not stream_id_match:
+            log("Could not extract stream ID from link")
+            xbmcgui.Dialog().ok("Playback Error", "Invalid stream URL format.")
+            return
+        
+        stream_id = stream_id_match.group(1)
+        log(f"Stream ID: {stream_id}")
+
+        # 2) Get the main iframe page to find mirrors
         resp0 = requests.post(link, headers=headers, timeout=10).text
         
-        # DEBUG: Save response for troubleshooting (remove in production)
-        debug_enabled = addon.getSettingBool('debug_mode')  # Add this setting to your addon
-        if debug_enabled:
-            debug_path = xbmcvfs.translatePath('special://temp/')
-            debug_file = os.path.join(debug_path, 'daddylive_debug.html')
-            try:
-                with open(debug_file, 'w', encoding='utf-8') as f:
-                    f.write(resp0)
-                log(f"Debug response saved to: {debug_file}")
-            except:
-                pass
-        
-        # FIXED: Improved iframe extraction with better logic
+        # Find main iframe
         all_iframes = re.findall(r'iframe[^>]*src=["\']([^"\']+)["\']', resp0, re.IGNORECASE)
-        
-        # Find the streaming iframe (more flexible matching)
-        raw_iframe_url = None
+        main_iframe_url = None
         for src in all_iframes:
-            # Skip unwanted iframes
-            if (src.startswith('javascript:') or 
-                'ad.a-ads.com' in src or 
-                'histats.com' in src or
-                'chatango.com' in src):
-                continue
-            
-            # Look for streaming indicators (relaxed criteria)
-            if any(indicator in src.lower() for indicator in ['stream', 'embed', 'vecloud', 'player']):
-                # Prefer thedaddy.to domain if available
-                if 'thedaddy.to' in src:
-                    raw_iframe_url = src
-                    break
-                elif not raw_iframe_url:  # Use as fallback
-                    raw_iframe_url = src
+            if 'thedaddy.to/embed/stream-' in src:
+                main_iframe_url = src
+                break
         
-        if not raw_iframe_url:
-            log(f"No streaming iframe found. Available iframes: {all_iframes}")
-            xbmcgui.Dialog().ok("Playback Error", "Could not find streaming iframe URL.")
+        if not main_iframe_url:
+            log("Main iframe not found")
+            xbmcgui.Dialog().ok("Playback Error", "Could not find streaming iframe.")
             return
 
-        log(f"Found streaming iframe: {raw_iframe_url}")
-
-    except Exception as e:
-        log(f"Error extracting iframe: {e}")
-        xbmcgui.Dialog().ok("Playback Error", f"Failed to extract iframe: {e}")
-        return
-
-    # 2) Pre-fetch that page to decode the Base64 mirror list
-    try:
-        tmp = requests.post(raw_iframe_url, headers=headers, timeout=5).text
-        m_dom = re.search(r'var\s+encodedDomains\s*=\s*"([^"]+)"', tmp)
-        if m_dom:
-            try:
-                decoded = base64.b64decode(m_dom.group(1)).decode('utf-8')
-                mirrors = json.loads(decoded)
-                log(f"Found {len(mirrors)} mirror hosts")
-            except Exception as e:
-                log(f"Failed to decode mirrors: {e}")
-                mirrors = []
-        else:
-            log("No encoded domains found")
+        # 3) Get nested iframe to extract mirrors
+        resp1 = requests.post(main_iframe_url, headers=headers, timeout=10).text
+        nested_iframes = re.findall(r'iframe[^>]*src=["\']([^"\']+)["\']', resp1, re.IGNORECASE)
+        
+        nested_iframe_url = None
+        for src in nested_iframes:
+            if 'yoxplay.xyz' in src and ('daddyhd.php' in src or 'daddylivehd.php' in src):
+                nested_iframe_url = src
+                break
+        
+        if not nested_iframe_url:
+            log("Nested iframe not found")
+            # Continue anyway - we can try without mirrors
             mirrors = []
-    except Exception as e:
-        log(f"Error pre-fetching iframe page: {e}")
-        mirrors = []
-
-    # Always try the original host first
-    hosts_to_try = [None] + mirrors
-
-    last_error = None
-    for i, host in enumerate(hosts_to_try):
-        try:
-            log(f"Trying host {i+1}/{len(hosts_to_try)}: {host or 'original'}")
-            
-            # 3a) Build the iframe URL for this host
-            parsed = urlparse(raw_iframe_url)
-            iframe_url = raw_iframe_url if host is None else urlunparse(parsed._replace(netloc=host))
-
-            # 3b) Fetch iframe page and extract auth vars
-            r_iframe = requests.post(iframe_url, headers=headers, timeout=5)
-            r_iframe.raise_for_status()
-            text = r_iframe.text
-
-            # FIXED: Safe regex extraction with proper error handling
-            def safe_extract(pattern, text, var_name):
-                match = re.search(pattern, text)
-                if not match:
-                    raise ValueError(f"Could not find {var_name} in iframe page")
-                return match.group(1)
-
+        else:
+            # 4) Get mirrors from nested iframe
             try:
-                channel_key = safe_extract(r'var\s+channelKey\s*=\s*["\']([^"\']+)["\']', text, 'channelKey')
-                auth_ts     = safe_extract(r'var\s+authTs\s*=\s*["\']([^"\']+)["\']',     text, 'authTs')
-                auth_rnd    = safe_extract(r'var\s+authRnd\s*=\s*["\']([^"\']+)["\']',    text, 'authRnd')
-                auth_sig    = safe_extract(r'var\s+authSig\s*=\s*["\']([^"\']+)["\']',    text, 'authSig')
-            except ValueError as e:
-                raise ValueError(f"Auth variable extraction failed: {e}")
+                headers_nested = {'Referer': main_iframe_url, 'user-agent': UA}
+                resp2 = requests.get(nested_iframe_url, headers=headers_nested, timeout=10).text
+                
+                encoded_match = re.search(r'encodedDomains["\'\s]*[=:]["\'\s]*["\']([^"\']+)["\']', resp2)
+                if encoded_match:
+                    decoded = base64.b64decode(encoded_match.group(1)).decode('utf-8')
+                    mirrors = json.loads(decoded)
+                    log(f"Found {len(mirrors)} mirrors")
+                else:
+                    mirrors = []
+            except Exception as e:
+                log(f"Error getting mirrors: {e}")
+                mirrors = []
 
-            log(f"Extracted auth vars - channel_key: {channel_key}")
+        # 5) Use the premium{id} pattern we discovered
+        channel_key = f"premium{stream_id}"
+        log(f"Using channel_key: {channel_key}")
 
-            # 3c) Call the central auth server
-            auth_url = (
-                f"{AUTH_SERVER}/auth.php?"
-                f"channel_id={channel_key}"
-                f"&ts={auth_ts}&rnd={auth_rnd}"
-                f"&sig={quote_plus(auth_sig)}"
-            )
-            r_auth = requests.get(auth_url, headers=headers, timeout=10)
-            r_auth.raise_for_status()
-            log("Auth server request successful")
+        # 6) Try main CDN first, then mirrors
+        hosts_to_try = ['top1.newkso.ru'] + mirrors[:10]  # Limit to first 10 mirrors for speed
 
-            # 3d) Call server_lookup on the same host
-            host_root = f"{parsed.scheme}://{(host or parsed.netloc)}"
-            lookup_url = f"{host_root}/server_lookup.php?channel_id={channel_key}"
-            r_lookup = requests.get(lookup_url, headers=headers, timeout=10)
-            r_lookup.raise_for_status()
-            
-            lookup_data = r_lookup.json()
-            server_key = lookup_data.get('server_key')
-            if not server_key:
-                raise RuntimeError(f"server_key missing from response: {lookup_data}")
+        last_error = None
+        for i, host in enumerate(hosts_to_try):
+            try:
+                log(f"Trying host {i+1}/{len(hosts_to_try)}: {host}")
+                
+                # Try the direct CDN approach first (skip auth.php for now)
+                if host == 'top1.newkso.ru':
+                    m3u8 = f"{CDN1_BASE}/{channel_key}/mono.m3u8"
+                    host_root = f"https://{host}"
+                else:
+                    # For mirror hosts, try to get server_key
+                    try:
+                        # Use dummy auth values - they might not be needed
+                        auth_url = (
+                            f"{AUTH_SERVER}/auth.php?"
+                            f"channel_id={channel_key}"
+                            f"&ts=1&rnd=1&sig=1"
+                        )
+                        r_auth = requests.get(auth_url, headers=headers, timeout=5)
+                        
+                        # Try server_lookup
+                        host_root = f"https://{host}"
+                        lookup_url = f"{host_root}/server_lookup.php?channel_id={channel_key}"
+                        r_lookup = requests.get(lookup_url, headers=headers, timeout=5)
+                        r_lookup.raise_for_status()
+                        
+                        lookup_data = r_lookup.json()
+                        server_key = lookup_data.get('server_key')
+                        if server_key == "top1/cdn":
+                            m3u8 = f"{CDN1_BASE}/{channel_key}/mono.m3u8"
+                        else:
+                            m3u8 = f"https://{server_key}.{CDN_DEFAULT}/{server_key}/{channel_key}/mono.m3u8"
+                    except:
+                        # Fallback: assume same pattern as main CDN
+                        m3u8 = f"https://{host}/cdn/{channel_key}/mono.m3u8"
+                        host_root = f"https://{host}"
 
-            log(f"Got server_key: {server_key}")
+                log(f"Testing M3U8: {m3u8}")
 
-            # 4) Build the final .m3u8 URL
-            if server_key == "top1/cdn":
-                m3u8 = f"{CDN1_BASE}/{channel_key}/mono.m3u8"
-            else:
-                m3u8 = f"https://{server_key}.{CDN_DEFAULT}/{server_key}/{channel_key}/mono.m3u8"
+                # 7) Test if the M3U8 URL is accessible
+                test_resp = requests.head(m3u8, headers={'Referer': host_root, 'user-agent': UA}, timeout=5)
+                if test_resp.status_code not in [200, 302]:
+                    raise Exception(f"M3U8 not accessible: {test_resp.status_code}")
 
-            log(f"Final M3U8 URL: {m3u8}")
+                # 8) Build final playback URL with headers
+                ref = quote_plus(host_root)
+                ua = quote_plus(UA)
+                final_link = f"{m3u8}|Referer={ref}&Origin={ref}&User-Agent={ua}&Keep-Alive=true"
 
-            # 5) Append Kodi headers and play
-            ref = quote_plus(host_root)
-            ua  = quote_plus(UA)
-            final_link = (
-                f"{m3u8}"
-                f"|Referer={ref}&Origin={ref}"
-                f"&User-Agent={ua}&Keep-Alive=true"
-            )
+                log(f"Final playback URL: {final_link}")
 
-            liz = xbmcgui.ListItem('Daddylive', path=final_link)
-            liz.setProperty('inputstream','inputstream.ffmpegdirect')
-            liz.setMimeType('application/x-mpegURL')
-            liz.setProperty('inputstream.ffmpegdirect.is_realtime_stream','true')
-            liz.setProperty('inputstream.ffmpegdirect.stream_mode','timeshift')
-            liz.setProperty('inputstream.ffmpegdirect.manifest_type','hls')
-            xbmcplugin.setResolvedUrl(addon_handle, True, liz)
+                # 9) Start playback
+                liz = xbmcgui.ListItem('Daddylive', path=final_link)
+                liz.setProperty('inputstream','inputstream.ffmpegdirect')
+                liz.setMimeType('application/x-mpegURL')
+                liz.setProperty('inputstream.ffmpegdirect.is_realtime_stream','true')
+                liz.setProperty('inputstream.ffmpegdirect.stream_mode','timeshift')
+                liz.setProperty('inputstream.ffmpegdirect.manifest_type','hls')
+                xbmcplugin.setResolvedUrl(addon_handle, True, liz)
 
-            log("Playback started successfully")
-            return
+                log("Playback started successfully")
+                return
 
-        except Exception as e:
-            last_error = e
-            log(f"Host {host or 'original'} failed: {e}")
+            except Exception as e:
+                last_error = e
+                log(f"Host {host} failed: {e}")
 
-    # If we get here, all hosts failed
-    log(f"All hosts failed. Last error: {last_error}")
-    log(traceback.format_exc())
-    xbmcgui.Dialog().ok("Playback Error", f"All mirrors failed:\n{str(last_error)}")
+        # If we get here, all hosts failed
+        log(f"All hosts failed. Last error: {last_error}")
+        xbmcgui.Dialog().ok("Playback Error", f"All streaming hosts failed. Last error: {str(last_error)}")
+
+    except Exception as e:
+        log(f"PlayStream error: {e}")
+        log(traceback.format_exc())
+        xbmcgui.Dialog().ok("Playback Error", f"Streaming failed: {str(e)}")
 
 kodiversion = getKodiversion()
 mode = params.get('mode', None)
